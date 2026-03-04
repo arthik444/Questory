@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+venv/
+env/
+.venv/
+
+# Build caching
+dist/
+build/
+.next/
+.vite/
+.turbo/
+__pycache__/
+*.pyc
+
+# Env
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
