@@ -115,6 +115,8 @@ export function CreateStoryPage() {
 
     // Core state
     const [topic, setTopic] = useState('');
+    const [storyConcept, setStoryConcept] = useState('');
+    const [heroes, setHeroes] = useState<Array<{ id: string, name: string, description: string, imageUrl?: string }>>([]);
     const [character, setCharacter] = useState('Brave Knight');
     const [artStyle, setArtStyle] = useState('Vibrant 3D (Default)');
     const [voice, setVoice] = useState('Friendly Guide (Default)');
@@ -135,6 +137,26 @@ export function CreateStoryPage() {
                 if (args.ageRange !== undefined) setAgeRange([args.ageRange]);
                 if (args.quizFrequency) setQuizFreq(args.quizFrequency);
             }
+        },
+        onHeroesProposed: (concept, proposedHeroes) => {
+            setStoryConcept(concept);
+            setHeroes(proposedHeroes);
+            setGamePhase('heroes');
+        },
+        onHeroImageGenerated: (heroId, imageUrl) => {
+            setHeroes(prev => {
+                const existing = prev.find(h => h.id === heroId);
+                if (existing) {
+                    return prev.map(h => h.id === heroId ? { ...h, imageUrl } : h);
+                } else {
+                    // It's a custom hero that wasn't in the initial list
+                    return [...prev, { id: heroId, name: 'Custom Hero', description: 'Your unique creation!', imageUrl }];
+                }
+            });
+        },
+        onCustomHeroGenerating: (heroId, name) => {
+            // Add a placeholder for the custom hero while it generates
+            setHeroes(prev => [...prev, { id: heroId, name, description: 'Generating your custom hero...' }]);
         }
     });
 
@@ -337,6 +359,53 @@ export function CreateStoryPage() {
                                 <Button onClick={() => setGamePhase('style')} variant="ghost" className="text-white/40 hover:text-white/80 hover:bg-white/5 rounded-full px-6 font-medium tracking-wider text-sm uppercase">Skip to next (debug) →</Button>
                             </div>
                         )}
+                    </div>
+                )}
+
+                {gamePhase === 'heroes' && (
+                    <div className="animate-in slide-in-from-right-10 fade-in duration-500 w-full max-w-5xl mx-auto flex flex-col space-y-8">
+                        <div className="text-center space-y-4">
+                            <h2 className="text-4xl md:text-5xl font-black text-white tracking-tight drop-shadow-lg">Choose Your Hero</h2>
+                            {storyConcept && (
+                                <p className="text-xl text-indigo-100 font-medium max-w-3xl mx-auto leading-relaxed bg-slate-900/40 p-4 rounded-2xl backdrop-blur-md border border-white/10">
+                                    {storyConcept}
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {heroes.map((hero) => (
+                                <Card
+                                    key={hero.id}
+                                    onClick={() => handleCharacterSelect(hero.name)}
+                                    className="group cursor-pointer bg-slate-900/60 backdrop-blur-xl border-white/10 hover:border-indigo-400 overflow-hidden transition-all duration-300 hover:scale-[1.03] hover:shadow-[0_0_30px_rgba(99,102,241,0.3)] min-h-[400px] flex flex-col"
+                                >
+                                    <div className="relative h-64 w-full bg-slate-950 flex items-center justify-center overflow-hidden">
+                                        {hero.imageUrl ? (
+                                            <img
+                                                src={hero.imageUrl}
+                                                alt={hero.name}
+                                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                            />
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center space-y-4 text-indigo-300/60 p-6 text-center">
+                                                <Loader2 className="w-10 h-10 animate-spin" />
+                                                <p className="text-sm font-medium animate-pulse pb-1 bg-gradient-to-r from-indigo-300 to-purple-300 bg-clip-text text-transparent">Conjuring visual...</p>
+                                            </div>
+                                        )}
+                                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent pointer-events-none" />
+                                    </div>
+                                    <div className="p-6 relative z-10 flex-1 flex flex-col">
+                                        <h3 className="text-2xl font-bold text-white mb-2 group-hover:text-indigo-300 transition-colors">{hero.name}</h3>
+                                        <p className="text-slate-300 leading-relaxed text-sm flex-1">{hero.description}</p>
+                                        <div className="mt-6 pt-4 border-t border-white/10 flex justify-between items-center text-xs font-bold text-indigo-400 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
+                                            <span>Select Hero</span>
+                                            <span>→</span>
+                                        </div>
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
                     </div>
                 )}
 
