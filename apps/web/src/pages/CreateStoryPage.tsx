@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Canvas, useFrame, useLoader } from '@react-three/fiber';
+import { Float, Sparkles } from '@react-three/drei';
+import * as THREE from 'three';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +17,97 @@ const BACKGROUND_IMAGES = [
     '/bg_magical_castle.png',
     '/bg_space_station.png'
 ];
+
+/**
+ * 3D Dora Avatar with real-time audio-reactive animations.
+ * Uses Dora's actual PNG images as Three.js textures on a circular plane.
+ * Lip-sync is achieved by swapping between the listening and speaking textures
+ * based on the real-time audio volume from the Web Audio API AnalyserNode.
+ * 
+ * Audio Routing (handled by useGeminiLive):
+ *   MediaStream -> AnalyserNode -> AudioContext.destination
+ *   getVolume() reads frequencyData from the AnalyserNode each frame.
+ *
+ * Animation Loop (useFrame @ 60fps):
+ *   1. Read volume (0.0 - 1.0) from getVolume()
+ *   2. If volume > threshold -> swap to speaking texture (mouth open)
+ *   3. Scale body proportional to volume (breathing/pulse effect)
+ *   4. Apply gentle sine-wave hover for idle floating
+ *   5. Tilt slightly on X-axis when speaking for a "leaning in" feel
+ */
+function DoraAvatar({ volume, isThinking }: { volume: () => number; isThinking: boolean }) {
+    const groupRef = useRef<THREE.Group>(null);
+    const meshRef = useRef<THREE.Mesh>(null);
+
+    // Load Dora's textures
+    const listeningTex = useLoader(THREE.TextureLoader, '/game_master_avatar.png');
+    const speakingTex = useLoader(THREE.TextureLoader, '/game_master_speaking.png');
+
+    // Create a circular geometry (plane with enough segments to clip as circle via alpha)
+    const circleGeo = useRef(new THREE.CircleGeometry(1.8, 64)).current;
+
+    useFrame((state) => {
+        if (!groupRef.current || !meshRef.current) return;
+
+        const vol = volume();
+        const mat = meshRef.current.material as THREE.MeshBasicMaterial;
+
+        // --- 1. Lip Sync: Swap texture based on volume threshold ---
+        if (isThinking && vol > 0.05) {
+            mat.map = speakingTex;
+        } else {
+            mat.map = listeningTex;
+        }
+        mat.needsUpdate = true;
+
+        // --- 2. Audio-reactive scale pulse ---
+        const targetScale = 1 + vol * 0.2;
+        const currentScale = meshRef.current.scale.x;
+        const newScale = THREE.MathUtils.lerp(currentScale, targetScale, 0.15);
+        meshRef.current.scale.setScalar(newScale);
+
+        // --- 3. Gentle floating hover ---
+        groupRef.current.position.y = Math.sin(state.clock.elapsedTime * 1.5) * 0.08;
+
+        // --- 4. Subtle "lean in" tilt when speaking ---
+        const targetRotX = isThinking ? Math.sin(state.clock.elapsedTime * 3) * 0.06 : 0;
+        groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetRotX, 0.1);
+
+        // --- 5. Gentle side wobble ---
+        groupRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.2) * 0.03;
+    });
+
+    return (
+        <group ref={groupRef}>
+            <Float speed={1.5} rotationIntensity={0.15} floatIntensity={0.3}>
+                {/* Dora's face as a textured circular plane */}
+                <mesh ref={meshRef} geometry={circleGeo}>
+                    <meshBasicMaterial map={listeningTex} transparent side={THREE.DoubleSide} />
+                </mesh>
+
+                {/* Magical sparkles emanating around Dora */}
+                <Sparkles
+                    count={40}
+                    scale={5}
+                    size={3}
+                    speed={isThinking ? 3 : 0.8}
+                    opacity={0.6}
+                    color={isThinking ? '#f9b7c8' : '#a1cfff'}
+                />
+
+                {/* Secondary sparkle layer for depth */}
+                <Sparkles
+                    count={20}
+                    scale={3}
+                    size={5}
+                    speed={isThinking ? 2 : 0.4}
+                    opacity={0.3}
+                    color="#ffffff"
+                />
+            </Float>
+        </group>
+    );
+}
 
 export function CreateStoryPage() {
     const navigate = useNavigate();
@@ -66,7 +160,6 @@ export function CreateStoryPage() {
 
                 // Provide a custom var for the blob glow behind the avatar
                 avatarRef.current.style.setProperty('--avatar-glow', `${glow}px`);
-
             }
             animationId = requestAnimationFrame(animate);
         };
@@ -151,8 +244,8 @@ export function CreateStoryPage() {
             ))}
 
             {/* Cinematic Overlay for Readability */}
-            <div className="absolute inset-0 bg-slate-900/20 mix-blend-overlay pointer-events-none z-0" />
-            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-900/20 to-slate-950/90 pointer-events-none z-0" />
+            <div className="absolute inset-0 bg-slate-900/10 mix-blend-overlay pointer-events-none z-0" />
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/40 via-transparent to-slate-950/80 pointer-events-none z-0" />
 
             {/* Dynamic ambient glow based on thinking state */}
             <div className={`absolute inset-0 transition-opacity duration-1000 radial-gradient ${isThinking ? 'bg-indigo-900/40 opacity-100' : 'opacity-0'}`} />
@@ -168,7 +261,6 @@ export function CreateStoryPage() {
                             isThinking ? "border-[8px] animate-flow-fast" : "border-[4px] animate-flow-slow"
                         )}
                     >
-                        {/* Glowing effect behind avatar */}
                         <div
                             className={cn(
                                 "absolute inset-0 rounded-full blur-2xl animate-pulse pointer-events-none transition-all duration-300 ease-in-out -z-10",
@@ -178,11 +270,13 @@ export function CreateStoryPage() {
                                 boxShadow: `0 0 var(--avatar-glow, 20px) var(--avatar-glow-color, ${isThinking ? '#f48fb1' : '#a1cfff'})`
                             }}
                         />
-                        <img
-                            src={isThinking ? "/game_master_speaking.png" : "/game_master_avatar.png"}
-                            alt="Game Master"
-                            className="relative z-10 w-full h-full rounded-full object-cover"
-                        />
+                        {/* 3D Real-time LipSync Avatar */}
+                        <div className="relative z-10 w-full h-full rounded-full overflow-hidden bg-transparent pointer-events-none">
+                            <Canvas camera={{ position: [0, 0, 5], fov: 45 }} style={{ background: 'transparent' }}>
+                                <ambientLight intensity={1.2} />
+                                <DoraAvatar volume={getVolume} isThinking={isThinking} />
+                            </Canvas>
+                        </div>
                     </div>
                 ) : (
                     <div
@@ -230,10 +324,10 @@ export function CreateStoryPage() {
                         </form>
 
                         <div className="flex gap-4 w-full max-w-lg justify-center mt-6">
-                            <Button variant="outline" className="flex-1 h-14 bg-indigo-900/40 backdrop-blur-md border border-indigo-500/30 text-indigo-100 hover:bg-indigo-800/60 hover:text-white rounded-2xl text-lg font-bold shadow-[0_0_15px_rgba(99,102,241,0.2)] hover:shadow-[0_0_25px_rgba(99,102,241,0.4)] transition-all duration-300 transform hover:-translate-y-1">
+                            <Button variant="outline" className="flex-1 h-14 bg-white/10 backdrop-blur-xl border-2 border-white/20 text-white hover:bg-white/20 hover:text-white rounded-full text-lg font-bold shadow-[0_8px_32px_rgba(0,0,0,0.3)] hover:shadow-[0_8px_32px_rgba(255,255,255,0.2)] transition-all duration-300 transform hover:-translate-y-1">
                                 <FileUp className="w-5 h-5 mr-3" /> Upload Book
                             </Button>
-                            <Button variant="outline" className="flex-1 h-14 bg-rose-900/40 backdrop-blur-md border border-rose-500/30 text-rose-100 hover:bg-rose-800/60 hover:text-white rounded-2xl text-lg font-bold shadow-[0_0_15px_rgba(244,63,94,0.2)] hover:shadow-[0_0_25px_rgba(244,63,94,0.4)] transition-all duration-300 transform hover:-translate-y-1">
+                            <Button variant="outline" className="flex-1 h-14 bg-white/10 backdrop-blur-xl border-2 border-white/20 text-white hover:bg-white/20 hover:text-white rounded-full text-lg font-bold shadow-[0_8px_32px_rgba(0,0,0,0.3)] hover:shadow-[0_8px_32px_rgba(255,255,255,0.2)] transition-all duration-300 transform hover:-translate-y-1">
                                 <LinkIcon className="w-5 h-5 mr-3" /> Paste Video
                             </Button>
                         </div>
