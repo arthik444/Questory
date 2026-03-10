@@ -1,0 +1,489 @@
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
+import { Mic, MicOff, Send, BookOpen, Loader2 } from 'lucide-react';
+import { useStoryBuilder, type StorySessionContext } from '@/hooks/useStoryBuilder';
+import { ComicPanel } from '@/components/comic/ComicPanel';
+import { QuizOverlay } from '@/components/comic/QuizOverlay';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
+
+export function StoryBuilderPage() {
+    const { sessionId } = useParams<{ sessionId: string }>();
+    const location = useLocation();
+    const navigate = useNavigate();
+    const storyCtx = location.state as StorySessionContext | null;
+
+    const {
+        panels,
+        activeQuiz,
+        builderPhase,
+        score,
+        isThinking,
+        status,
+        closingNarration,
+        connect,
+        disconnect,
+        sendText,
+        submitQuizAnswer,
+        getVolume,
+        manualReconnect,
+    } = useStoryBuilder(sessionId ?? 'default');
+
+    const [textInput, setTextInput] = useState('');
+    const [narrationLog, setNarrationLog] = useState<string[]>([]);
+    const [volume, setVolume] = useState(0);
+
+    const panelsEndRef = useRef<HTMLDivElement>(null);
+    const narrationEndRef = useRef<HTMLDivElement>(null);
+    const volumeRafRef = useRef<number | null>(null);
+
+    // Auto-connect on mount if we have context
+    useEffect(() => {
+        if (storyCtx && sessionId) {
+            connect(storyCtx);
+        }
+        return () => disconnect();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Auto-scroll to latest panel
+    useEffect(() => {
+        panelsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, [panels.length]);
+
+    // Auto-scroll narration log
+    useEffect(() => {
+        narrationEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, [narrationLog.length]);
+
+    // Build narration log from panel narrations
+    useEffect(() => {
+        if (panels.length > 0) {
+            const lastPanel = panels[panels.length - 1];
+            setNarrationLog(prev => {
+                const alreadyAdded = prev.some(entry => entry === lastPanel.narration);
+                if (alreadyAdded) return prev;
+                return [...prev, lastPanel.narration];
+            });
+        }
+    }, [panels]);
+
+    // Volume animation loop
+    const startVolumeLoop = useCallback(() => {
+        const loop = () => {
+            setVolume(getVolume());
+            volumeRafRef.current = requestAnimationFrame(loop);
+        };
+        volumeRafRef.current = requestAnimationFrame(loop);
+    }, [getVolume]);
+
+    useEffect(() => {
+        if (status === 'connected') {
+            startVolumeLoop();
+        }
+        return () => {
+            if (volumeRafRef.current) cancelAnimationFrame(volumeRafRef.current);
+        };
+    }, [status, startVolumeLoop]);
+
+    const handleTextSend = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!textInput.trim()) return;
+        sendText(textInput.trim());
+        setNarrationLog(prev => [...prev, `You: ${textInput.trim()}`]);
+        setTextInput('');
+    };
+
+    // Guard: no context (direct URL navigation)
+    if (!storyCtx) {
+        return (
+            <div className="min-h-screen bg-amber-50 flex items-center justify-center p-8">
+                <div className="text-center border-4 border-black rounded-2xl p-8 bg-white max-w-sm">
+                    <BookOpen className="w-12 h-12 mx-auto mb-4 text-slate-400" />
+                    <h2 className="font-comic text-2xl text-black mb-2">No Story Found!</h2>
+                    <p className="text-slate-600 mb-6 text-sm">Please create a story first to use the comic builder.</p>
+                    <button
+                        onClick={() => navigate('/create')}
+                        className="bg-indigo-600 text-white font-comic text-lg px-6 py-2 rounded-xl border-2 border-black"
+                    >
+                        Create a Story
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    const panelCount = panels.length;
+
+    return (
+        <div className="min-h-screen bg-amber-50 flex flex-col">
+            {/* ── Sticky Header ── */}
+            <header className="sticky top-0 z-30 bg-white border-b-4 border-black px-4 py-2 flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-black" />
+                    <span className="font-comic text-xl text-black tracking-wide">QUESTORY COMICS</span>
+                    <span className="bg-black text-white font-comic text-xs px-2 py-0.5 rounded-full">
+                        #{sessionId?.slice(-4).toUpperCase()}
+                    </span>
+                </div>
+
+                <div className="flex items-center gap-2 ml-auto">
+                    {/* Thinking indicator */}
+                    {isThinking && (
+                        <div className="flex items-center gap-1.5 bg-indigo-100 border-2 border-indigo-400 rounded-full px-3 py-1">
+                            <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
+                            <span className="font-comic text-xs text-indigo-700 tracking-wide">NARRATING...</span>
+                        </div>
+                    )}
+
+                    {/* Panel count */}
+                    <div className="bg-slate-100 border-2 border-black rounded-full px-3 py-1 font-comic text-sm text-black">
+                        {panelCount} {panelCount === 1 ? 'PANEL' : 'PANELS'}
+                    </div>
+
+                    {/* Score */}
+                    <div className="bg-yellow-400 border-2 border-black rounded-full px-3 py-1 font-comic text-sm text-black font-bold">
+                        ⭐ {score} PTS
+                    </div>
+                </div>
+            </header>
+
+            {/* ── Story Complete Banner ── */}
+            {builderPhase === 'complete' && (
+                <div className="bg-yellow-400 border-b-4 border-black px-6 py-5 text-center">
+                    <h1 className="font-comic text-5xl text-black tracking-widest mb-1">THE END</h1>
+                    {closingNarration && (
+                        <p className="text-black text-sm font-semibold max-w-xl mx-auto mb-4">{closingNarration}</p>
+                    )}
+                    <div className="flex gap-3 justify-center">
+                        <div className="bg-white border-2 border-black rounded-full px-4 py-1.5 font-comic text-sm text-black">
+                            ⭐ Final Score: {score} PTS
+                        </div>
+                        <button
+                            onClick={() => navigate('/create')}
+                            className="bg-black text-yellow-400 font-comic text-sm px-4 py-1.5 rounded-full border-2 border-black hover:bg-slate-800 transition-colors"
+                        >
+                            Create Another Story →
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Main Content ── */}
+            <div className="flex flex-1 min-h-0">
+
+                {/* ── Left Sidebar ── */}
+                <aside className="hidden lg:flex flex-col w-64 border-r-4 border-black bg-white sticky top-[57px] h-[calc(100vh-57px)]">
+                    {/* Hero card */}
+                    <div className="border-b-4 border-black p-4">
+                        <div className="bg-amber-50 border-2 border-black rounded-xl p-3">
+                            <div className="font-comic text-xs text-slate-500 uppercase tracking-wide mb-1">Hero</div>
+                            <div className="font-bold text-black text-sm">{storyCtx.heroName}</div>
+                            <div className="font-comic text-xs text-slate-500 mt-1 uppercase">{storyCtx.artStyle}</div>
+                        </div>
+                        <div className="mt-2 bg-amber-50 border-2 border-black rounded-xl p-3">
+                            <div className="font-comic text-xs text-slate-500 uppercase tracking-wide mb-1">Story</div>
+                            <div className="font-bold text-black text-sm capitalize">{storyCtx.topic}</div>
+                        </div>
+                    </div>
+
+                    {/* Narration transcript */}
+                    <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+                        <div className="font-comic text-xs text-slate-400 uppercase tracking-wide">Story Log</div>
+                        {narrationLog.length === 0 ? (
+                            <div className="text-xs text-slate-400 italic mt-2">The story is about to begin...</div>
+                        ) : (
+                            narrationLog.map((entry, i) => (
+                                <div
+                                    key={i}
+                                    className={cn(
+                                        'text-xs leading-snug rounded-lg p-2 border',
+                                        entry.startsWith('You:')
+                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                                            : 'bg-amber-50 border-amber-200 text-amber-900'
+                                    )}
+                                >
+                                    {entry}
+                                </div>
+                            ))
+                        )}
+                        <div ref={narrationEndRef} />
+                    </div>
+
+                    {/* Voice orb — sidebar */}
+                    <div className="border-t-4 border-black p-4 flex items-center justify-center">
+                        <button
+                            className={cn(
+                                'relative w-16 h-16 rounded-full border-4 border-black flex items-center justify-center transition-all duration-150',
+                                status === 'connected'
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-slate-200 text-slate-500'
+                            )}
+                            style={{
+                                boxShadow: status === 'connected' && volume > 0.05
+                                    ? `0 0 ${8 + volume * 24}px ${4 + volume * 12}px rgba(99,102,241,0.5)`
+                                    : undefined,
+                                transform: `scale(${1 + volume * 0.15})`
+                            }}
+                            title={status === 'connected' ? 'Mic active — speak to guide the story' : 'Connecting...'}
+                        >
+                            {status === 'connected' ? (
+                                <Mic className="w-6 h-6" />
+                            ) : (
+                                <MicOff className="w-6 h-6" />
+                            )}
+                        </button>
+                    </div>
+                </aside>
+
+                {/* ── Comic Canvas ── */}
+                <main className="flex-1 flex flex-col overflow-y-auto pb-24">
+                    {/* Connecting state */}
+                    {builderPhase === 'connecting' && (
+                        <div className="flex-1 flex items-center justify-center p-12">
+                            <div className="text-center">
+                                <Loader2 className="w-12 h-12 mx-auto mb-4 text-indigo-600 animate-spin" />
+                                <div className="font-comic text-2xl text-black">OPENING THE STORY...</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── CINEMATIC FOCUS STAGE (latest panel) ── */}
+                    {panels.length > 0 && builderPhase !== 'complete' && (() => {
+                        const activePanel = panels[panels.length - 1];
+                        const isImageReady = activePanel.imageStatus === 'ready' && activePanel.imageUrl;
+                        return (
+                            <div className="relative w-full" style={{ perspective: '1200px' }}>
+                                {/* Main stage container with 3D tilt */}
+                                <div
+                                    className={cn(
+                                        "relative mx-auto w-full max-w-5xl overflow-hidden rounded-xl border-4 border-black shadow-2xl transition-all duration-1000",
+                                        isThinking
+                                            ? "shadow-[0_0_60px_rgba(99,102,241,0.5)]"
+                                            : "shadow-[0_8px_30px_rgba(0,0,0,0.4)]"
+                                    )}
+                                    style={{
+                                        aspectRatio: '16 / 9',
+                                        transform: isThinking
+                                            ? 'rotateX(1deg) scale(1.01)'
+                                            : 'rotateX(0deg) scale(1)',
+                                        transformOrigin: 'center bottom',
+                                        transition: 'transform 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 1s ease',
+                                    }}
+                                >
+                                    {/* Panel image with Ken Burns slow zoom */}
+                                    {isImageReady ? (
+                                        <img
+                                            src={activePanel.imageUrl}
+                                            alt={`Active Panel ${activePanel.panelIndex + 1}`}
+                                            className="absolute inset-0 w-full h-full object-cover"
+                                            style={{
+                                                animation: isThinking
+                                                    ? 'kenBurnsZoom 12s ease-in-out infinite alternate'
+                                                    : 'none',
+                                                transform: isThinking ? undefined : 'scale(1.05)',
+                                                transition: 'transform 2s ease',
+                                            }}
+                                        />
+                                    ) : (
+                                        <div className="absolute inset-0 bg-gradient-to-br from-slate-200 via-slate-300 to-slate-200 animate-pulse flex items-center justify-center">
+                                            <div className="text-center">
+                                                <Loader2 className="w-10 h-10 mx-auto mb-2 text-slate-400 animate-spin" />
+                                                <div className="font-comic text-xl text-slate-400 tracking-wider">PAINTING THE SCENE...</div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Cinematic gradient overlay for readability */}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent pointer-events-none" />
+
+                                    {/* Panel number badge */}
+                                    <div className="absolute top-4 left-4 z-20 bg-black/80 text-white font-bold text-sm w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm border border-white/20">
+                                        {activePanel.panelIndex + 1}
+                                    </div>
+
+                                    {/* "LIVE" badge while narrating */}
+                                    {isThinking && (
+                                        <div className="absolute top-4 right-4 z-20 flex items-center gap-1.5 bg-red-600 border-2 border-white/30 text-white font-comic text-xs px-3 py-1 rounded-full animate-pulse shadow-lg">
+                                            <div className="w-2 h-2 bg-white rounded-full animate-ping" />
+                                            LIVE
+                                        </div>
+                                    )}
+
+                                    {/* Speech bubble */}
+                                    {activePanel.speechBubble && isImageReady && (
+                                        <div className="absolute top-16 right-6 max-w-[50%] z-20">
+                                            <div className="relative bg-white border-2 border-black rounded-2xl px-4 py-2 text-black font-bold text-sm leading-tight shadow-xl">
+                                                {activePanel.speechBubble}
+                                                <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[10px] border-t-black" />
+                                                <div className="absolute -bottom-1.5 left-4 w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[10px] border-t-white" />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Bottom caption bar */}
+                                    <div className="absolute bottom-0 left-0 right-0 z-20 px-6 py-4">
+                                        {activePanel.learningObjective && (
+                                            <div className="mb-2">
+                                                <span className="text-xs bg-indigo-500/80 backdrop-blur-sm border border-indigo-300/50 text-white font-bold rounded-full px-3 py-1 leading-tight">
+                                                    📚 {activePanel.learningObjective}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <p className="font-comic text-white text-base md:text-lg leading-relaxed drop-shadow-lg max-w-3xl">
+                                            {activePanel.narration}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* ── PAST PANELS TIMELINE (smaller grid of older panels) ── */}
+                    {panels.length > 1 && (
+                        <div className="px-2 pt-2 pb-1">
+                            <div className="font-comic text-xs text-slate-400 uppercase tracking-widest mb-1.5 px-1">Story So Far</div>
+                            <div className="flex gap-[3px] overflow-x-auto pb-2 snap-x">
+                                {panels.slice(0, -1).map((panel) => (
+                                    <div
+                                        key={panel.id}
+                                        className="flex-shrink-0 w-40 md:w-52 snap-start"
+                                    >
+                                        <ComicPanel
+                                            panel={panel}
+                                            isLatest={false}
+                                            isSplash={false}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Complete state — show all panels in full grid */}
+                    {builderPhase === 'complete' && panels.length > 0 && (
+                        <div className="p-2">
+                            <div className="bg-black border-4 border-black grid grid-cols-2 lg:grid-cols-3 gap-[3px] p-[3px]">
+                                {panels.map((panel, idx) => (
+                                    <ComicPanel
+                                        key={panel.id}
+                                        panel={panel}
+                                        isLatest={false}
+                                        isSplash={idx === 0}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Next panel loading placeholder */}
+                    {isThinking && builderPhase === 'building' && panels.length > 0 && (
+                        <div className="px-3 pt-1">
+                            <div className="h-1.5 w-32 bg-indigo-200 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 rounded-full animate-pulse" style={{ width: '60%' }} />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Empty state while building first panel */}
+                    {panels.length === 0 && builderPhase === 'building' && (
+                        <div className="flex-1 flex items-center justify-center p-12">
+                            <div className="text-center border-4 border-dashed border-slate-300 rounded-2xl p-12">
+                                <div className="font-comic text-3xl text-slate-300 mb-2">YOUR COMIC</div>
+                                <div className="font-comic text-xl text-slate-400">PANELS WILL APPEAR HERE</div>
+                                <div className="flex gap-1 justify-center mt-4">
+                                    <div className="w-3 h-3 bg-slate-300 rounded-full animate-bounce [animation-delay:0ms]" />
+                                    <div className="w-3 h-3 bg-slate-300 rounded-full animate-bounce [animation-delay:150ms]" />
+                                    <div className="w-3 h-3 bg-slate-300 rounded-full animate-bounce [animation-delay:300ms]" />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div ref={panelsEndRef} />
+                </main>
+            </div>
+
+            {/* ── Bottom Input Bar ── */}
+            {builderPhase !== 'complete' && (
+                <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t-4 border-black px-4 py-3 flex items-center gap-3">
+                    {/* Mobile voice orb */}
+                    <div
+                        className={cn(
+                            'lg:hidden w-11 h-11 rounded-full border-2 border-black flex items-center justify-center flex-shrink-0 transition-all duration-150',
+                            status === 'connected' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
+                        )}
+                        style={{
+                            boxShadow: status === 'connected' && volume > 0.05
+                                ? `0 0 ${6 + volume * 16}px rgba(99,102,241,0.6)`
+                                : undefined,
+                        }}
+                    >
+                        {status === 'connected' ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                    </div>
+
+                    <form onSubmit={handleTextSend} className="flex-1 flex gap-2">
+                        <Input
+                            value={textInput}
+                            onChange={e => setTextInput(e.target.value)}
+                            placeholder={status === 'connected' ? 'What happens next? Type or speak...' : 'Connecting...'}
+                            disabled={status !== 'connected' || builderPhase === 'quiz_active'}
+                            className="flex-1 border-2 border-black rounded-xl font-bold text-sm placeholder:font-normal"
+                        />
+                        <button
+                            type="submit"
+                            disabled={!textInput.trim() || status !== 'connected' || builderPhase === 'quiz_active'}
+                            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white border-2 border-black rounded-xl px-3 transition-colors"
+                        >
+                            <Send className="w-4 h-4" />
+                        </button>
+                    </form>
+
+                    {/* Score badge */}
+                    <div className="hidden sm:flex bg-yellow-400 border-2 border-black rounded-full px-3 py-1.5 font-comic text-sm text-black font-bold whitespace-nowrap">
+                        ⭐ {score}
+                    </div>
+                </div>
+            )}
+
+            {/* ── Reconnecting Overlay ── */}
+            {status === 'reconnecting' && (
+                <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-white border-4 border-black rounded-2xl p-8 max-w-xs text-center shadow-xl">
+                        <Loader2 className="w-10 h-10 mx-auto mb-3 text-amber-500 animate-spin" />
+                        <h2 className="font-comic text-2xl text-black mb-1">RECONNECTING...</h2>
+                        <p className="text-slate-600 text-sm">The story guide is coming back.</p>
+                        <p className="text-slate-500 text-xs mt-1">Your panels are safe!</p>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Connection Lost Overlay ── */}
+            {status === 'error' && panels.length > 0 && (
+                <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-white border-4 border-black rounded-2xl p-8 max-w-xs text-center shadow-xl">
+                        <div className="text-4xl mb-3">📡</div>
+                        <h2 className="font-comic text-2xl text-black mb-1">CONNECTION LOST</h2>
+                        <p className="text-slate-600 text-sm mb-4">
+                            Your {panels.length} {panels.length === 1 ? 'panel' : 'panels'} and score are saved!
+                        </p>
+                        <button
+                            onClick={manualReconnect}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-comic text-lg px-6 py-2 rounded-xl border-2 border-black transition-colors"
+                        >
+                            Tap to Retry
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Quiz Overlay ── */}
+            {activeQuiz && (
+                <QuizOverlay
+                    quiz={activeQuiz}
+                    onAnswer={submitQuizAnswer}
+                />
+            )}
+        </div>
+    );
+}

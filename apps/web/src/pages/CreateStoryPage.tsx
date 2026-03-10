@@ -121,7 +121,7 @@ export function CreateStoryPage() {
     const [isSubmittingTopic, setIsSubmittingTopic] = useState(false);
 
     // AI hook integration
-    const { status, gamePhase, setGamePhase, connect, disconnect, isThinking, sendText, getVolume } = useGeminiLive({
+    const { status, gamePhase, setGamePhase, connect, disconnect, isThinking, sendText, getVolume, manualReconnect } = useGeminiLive({
         onMessage: () => {
             setIsSubmittingTopic(false);
         },
@@ -137,18 +137,26 @@ export function CreateStoryPage() {
                 if (existing) {
                     return prev.map(h => h.id === heroId ? { ...h, imageUrl } : h);
                 } else {
-                    // It's a custom hero that wasn't in the initial list
                     return [...prev, { id: heroId, name: 'Custom Hero', description: 'Your unique creation!', imageUrl }];
                 }
             });
         },
         onCustomHeroGenerating: (heroId, name) => {
-            // Add a placeholder for the custom hero while it generates, if not already there
             setHeroes(prev => {
                 if (prev.find(h => h.id === heroId)) return prev;
                 return [...prev, { id: heroId, name, description: 'Generating your custom hero...' }];
             });
-        }
+        },
+        onReconnected: () => {
+            const heroNames = heroes.map(h => h.name).join(', ');
+            sendText(`[CONTEXT RESUME] Setting up a story adventure.
+Topic: ${topic}
+Story Concept: ${storyConcept}
+Heroes proposed: ${heroNames}
+Selected hero: ${character}
+Current phase: ${gamePhase}
+Please continue from the ${gamePhase} phase.`);
+        },
     });
 
     const isConnected = status === 'connected';
@@ -223,18 +231,74 @@ export function CreateStoryPage() {
         }
     };
 
+    // --- Smooth navigation: wait for greeting to finish before navigating ---
+    const [pendingNavigation, setPendingNavigation] = useState<{
+        heroName: string;
+        greetingStarted: boolean;
+    } | null>(null);
+
     const handleCharacterSelect = (char: string) => {
         if (isSubmitting) return;
         setCharacter(char);
+        setIsSubmitting(true);
+
+        // Tell Gemini the pick — it will respond with a greeting audio
         if (isConnected) {
             sendText(`I pick the ${char} character. I'm ready to play!`);
         }
-        setIsSubmitting(true);
-        setTimeout(() => {
-            const sessionId = Math.random().toString(36).substring(7);
-            navigate(`/play/${sessionId}`);
-        }, 1500);
+
+        // Begin watching for the greeting to play and finish
+        setPendingNavigation({ heroName: char, greetingStarted: false });
     };
+
+    // Watch isThinking to detect when the greeting starts and finishes
+    useEffect(() => {
+        if (!pendingNavigation) return;
+
+        if (isThinking && !pendingNavigation.greetingStarted) {
+            // Greeting audio has started playing
+            setPendingNavigation(prev => prev ? { ...prev, greetingStarted: true } : null);
+        }
+
+        if (!isThinking && pendingNavigation.greetingStarted) {
+            // Greeting audio has finished — clean up and navigate
+            disconnect();
+            const sessionId = Math.random().toString(36).substring(7);
+            navigate(`/build/${sessionId}`, {
+                state: {
+                    topic,
+                    heroName: pendingNavigation.heroName,
+                    artStyle: 'comic',
+                    ageRange: 2,
+                    quizFrequency: 'after each teaching panel',
+                },
+            });
+            setPendingNavigation(null);
+        }
+    }, [isThinking, pendingNavigation, disconnect, navigate, topic]);
+
+    // Safety timeout: if greeting never starts within 4s, navigate anyway
+    useEffect(() => {
+        if (!pendingNavigation) return;
+        const timer = setTimeout(() => {
+            if (pendingNavigation) {
+                console.warn('[CreateStory] Safety timeout — navigating without greeting finish');
+                disconnect();
+                const sessionId = Math.random().toString(36).substring(7);
+                navigate(`/build/${sessionId}`, {
+                    state: {
+                        topic,
+                        heroName: pendingNavigation.heroName,
+                        artStyle: 'comic',
+                        ageRange: 2,
+                        quizFrequency: 'after each teaching panel',
+                    },
+                });
+                setPendingNavigation(null);
+            }
+        }, 6000);
+        return () => clearTimeout(timer);
+    }, [pendingNavigation, disconnect, navigate, topic]);
 
     return (
         <div className="flex-1 w-full h-screen relative overflow-hidden bg-slate-900 flex justify-center items-center">
@@ -262,6 +326,22 @@ export function CreateStoryPage() {
 
             {/* Central Voice Avatar - Floating at bottom right */}
             <div className="absolute bottom-8 right-8 z-50 flex flex-col items-end gap-2 group">
+                {/* Reconnecting badge */}
+                {status === 'reconnecting' && (
+                    <div className="flex items-center gap-1.5 bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg animate-pulse">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Reconnecting...
+                    </div>
+                )}
+
+                {/* Error retry indicator */}
+                {status === 'error' && (
+                    <div
+                        onClick={manualReconnect}
+                        className="flex items-center gap-1.5 bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg cursor-pointer hover:bg-red-600 transition-colors"
+                    >
+                        Connection lost — Tap to retry
+                    </div>
+                )}
                 {isConnected ? (
                     <div
                         ref={avatarRef}
