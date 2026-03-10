@@ -4,10 +4,18 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-async def generate_image(prompt: str, is_character: bool = False) -> Optional[str]:
+async def generate_image(
+    prompt: str,
+    is_character: bool = False,
+    reference_image_b64: Optional[str] = None,
+) -> Optional[str]:
     """
     Calls the Gemini 3.1 Flash Image API to generate an image.
     Returns a base64 data URI string if successful, else None.
+
+    If reference_image_b64 is provided (a full data-URI like
+    "data:image/png;base64,..."), it will be sent alongside the prompt
+    so the model maintains visual continuity with the previous scene.
     """
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -25,11 +33,28 @@ async def generate_image(prompt: str, is_character: bool = False) -> Optional[st
 
     try:
         client = genai.Client(api_key=api_key)
-        
+
+        # Build contents list — optionally include a reference image for continuity
+        contents: list = []
+        if reference_image_b64 and not is_character:
+            try:
+                # reference_image_b64 is expected as "data:<mime>;base64,<data>"
+                header, raw_b64 = reference_image_b64.split(",", 1)
+                ref_mime = header.split(":")[1].split(";")[0]  # e.g. "image/png"
+                ref_bytes = base64.b64decode(raw_b64)
+                contents.append(types.Part.from_bytes(data=ref_bytes, mime_type=ref_mime))
+                contents.append(f"Using the attached image as a style/continuity reference, generate a NEW scene (do NOT copy it): {full_prompt}")
+                print(f"  [image_gen] Included reference image ({len(ref_bytes)} bytes) for continuity")
+            except Exception as ref_err:
+                print(f"  [image_gen] Could not parse reference image, skipping: {ref_err}")
+                contents = [full_prompt]
+        else:
+            contents = [full_prompt]
+
         # Use generate_content instead of generate_images for the 3.1-flash-image-preview model
         response = await client.aio.models.generate_content(
             model='gemini-3.1-flash-image-preview',
-            contents=[full_prompt],
+            contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"]
             )

@@ -36,6 +36,8 @@ export function useGeminiLive({ onMessage, onFunctionCall, onSceneUpdate, onHero
     const reconnectAttemptRef = useRef(0);
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSystemInstructionRef = useRef<string | undefined>(undefined);
+    // Guard against React StrictMode double-mount creating two sessions
+    const isConnectingRef = useRef(false);
 
     // Store callbacks in refs so ws handlers always see the latest
     const onMessageRef = useRef(onMessage);
@@ -308,6 +310,12 @@ export function useGeminiLive({ onMessage, onFunctionCall, onSceneUpdate, onHero
     // --- Connect (fresh start) ---
 
     const connect = useCallback(async (systemInstruction?: string) => {
+        // Guard: prevent React StrictMode double-mount from creating 2 sessions
+        if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log('[GeminiLive] connect() called while already connected/connecting — ignoring.');
+            return;
+        }
+        isConnectingRef.current = true;
         try {
             setStatus('connecting');
             intentionalDisconnectRef.current = false;
@@ -374,6 +382,7 @@ export function useGeminiLive({ onMessage, onFunctionCall, onSceneUpdate, onHero
     // --- Disconnect (intentional) ---
 
     const disconnect = useCallback(() => {
+        isConnectingRef.current = false;
         intentionalDisconnectRef.current = true;
         if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);

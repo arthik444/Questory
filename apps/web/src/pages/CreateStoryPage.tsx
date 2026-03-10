@@ -231,23 +231,74 @@ Please continue from the ${gamePhase} phase.`);
         }
     };
 
+    // --- Smooth navigation: wait for greeting to finish before navigating ---
+    const [pendingNavigation, setPendingNavigation] = useState<{
+        heroName: string;
+        greetingStarted: boolean;
+    } | null>(null);
+
     const handleCharacterSelect = (char: string) => {
         if (isSubmitting) return;
         setCharacter(char);
+        setIsSubmitting(true);
+
+        // Tell Gemini the pick — it will respond with a greeting audio
         if (isConnected) {
             sendText(`I pick the ${char} character. I'm ready to play!`);
         }
-        setIsSubmitting(true);
-        setTimeout(() => {
+
+        // Begin watching for the greeting to play and finish
+        setPendingNavigation({ heroName: char, greetingStarted: false });
+    };
+
+    // Watch isThinking to detect when the greeting starts and finishes
+    useEffect(() => {
+        if (!pendingNavigation) return;
+
+        if (isThinking && !pendingNavigation.greetingStarted) {
+            // Greeting audio has started playing
+            setPendingNavigation(prev => prev ? { ...prev, greetingStarted: true } : null);
+        }
+
+        if (!isThinking && pendingNavigation.greetingStarted) {
+            // Greeting audio has finished — clean up and navigate
+            disconnect();
             const sessionId = Math.random().toString(36).substring(7);
             navigate(`/build/${sessionId}`, {
                 state: {
                     topic,
-                    heroName: character
-                }
+                    heroName: pendingNavigation.heroName,
+                    artStyle: 'comic',
+                    ageRange: 2,
+                    quizFrequency: 'after each teaching panel',
+                },
             });
-        }, 1500);
-    };
+            setPendingNavigation(null);
+        }
+    }, [isThinking, pendingNavigation, disconnect, navigate, topic]);
+
+    // Safety timeout: if greeting never starts within 4s, navigate anyway
+    useEffect(() => {
+        if (!pendingNavigation) return;
+        const timer = setTimeout(() => {
+            if (pendingNavigation) {
+                console.warn('[CreateStory] Safety timeout — navigating without greeting finish');
+                disconnect();
+                const sessionId = Math.random().toString(36).substring(7);
+                navigate(`/build/${sessionId}`, {
+                    state: {
+                        topic,
+                        heroName: pendingNavigation.heroName,
+                        artStyle: 'comic',
+                        ageRange: 2,
+                        quizFrequency: 'after each teaching panel',
+                    },
+                });
+                setPendingNavigation(null);
+            }
+        }, 6000);
+        return () => clearTimeout(timer);
+    }, [pendingNavigation, disconnect, navigate, topic]);
 
     return (
         <div className="flex-1 w-full h-screen relative overflow-hidden bg-slate-900 flex justify-center items-center">

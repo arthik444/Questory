@@ -90,6 +90,8 @@ export function useStoryBuilder(sessionId: string) {
     const reconnectAttemptRef = useRef(0);
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const sessionContextRef = useRef<StorySessionContext | null>(null);
+    // Guard against React StrictMode double-mount creating two WebSocket sessions
+    const isConnectingRef = useRef(false);
     // Refs for current state (accessed inside reconnect without stale closures)
     const panelsRef = useRef<ComicPanelState[]>([]);
     const scoreRef = useRef(0);
@@ -381,6 +383,12 @@ export function useStoryBuilder(sessionId: string) {
 
     // Fresh connect — resets all state, starts a new story
     const connect = useCallback(async (ctx: StorySessionContext) => {
+        // Guard: prevent React StrictMode double-mount from creating 2 sessions
+        if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log('[Builder] connect() called while already connected/connecting — ignoring.');
+            return;
+        }
+        isConnectingRef.current = true;
         try {
             intentionalDisconnectRef.current = false;
             reconnectAttemptRef.current = 0;
@@ -422,6 +430,7 @@ export function useStoryBuilder(sessionId: string) {
 
     // Intentional disconnect — no auto-reconnect
     const disconnect = useCallback(() => {
+        isConnectingRef.current = false;
         intentionalDisconnectRef.current = true;
         if (reconnectTimerRef.current) {
             clearTimeout(reconnectTimerRef.current);

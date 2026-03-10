@@ -30,7 +30,6 @@ export function StoryBuilderPage() {
     } = useStoryBuilder(sessionId ?? 'default');
 
     const [textInput, setTextInput] = useState('');
-    const [isMicActive, setIsMicActive] = useState(false);
     const [narrationLog, setNarrationLog] = useState<string[]>([]);
     const [volume, setVolume] = useState(0);
 
@@ -41,10 +40,10 @@ export function StoryBuilderPage() {
     // Auto-connect on mount if we have context
     useEffect(() => {
         if (storyCtx && sessionId) {
-            connect(storyCtx).then(() => setIsMicActive(true));
+            connect(storyCtx);
         }
         return () => disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Auto-scroll to latest panel
@@ -249,25 +248,139 @@ export function StoryBuilderPage() {
                         </div>
                     )}
 
-                    {/* Comic grid */}
-                    {panels.length > 0 && (
+                    {/* ── CINEMATIC FOCUS STAGE (latest panel) ── */}
+                    {panels.length > 0 && builderPhase !== 'complete' && (() => {
+                        const activePanel = panels[panels.length - 1];
+                        const isImageReady = activePanel.imageStatus === 'ready' && activePanel.imageUrl;
+                        return (
+                            <div className="relative w-full" style={{ perspective: '1200px' }}>
+                                {/* Main stage container with 3D tilt */}
+                                <div
+                                    className={cn(
+                                        "relative mx-auto w-full max-w-5xl overflow-hidden rounded-xl border-4 border-black shadow-2xl transition-all duration-1000",
+                                        isThinking
+                                            ? "shadow-[0_0_60px_rgba(99,102,241,0.5)]"
+                                            : "shadow-[0_8px_30px_rgba(0,0,0,0.4)]"
+                                    )}
+                                    style={{
+                                        aspectRatio: '16 / 9',
+                                        transform: isThinking
+                                            ? 'rotateX(1deg) scale(1.01)'
+                                            : 'rotateX(0deg) scale(1)',
+                                        transformOrigin: 'center bottom',
+                                        transition: 'transform 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 1s ease',
+                                    }}
+                                >
+                                    {/* Panel image with Ken Burns slow zoom */}
+                                    {isImageReady ? (
+                                        <img
+                                            src={activePanel.imageUrl}
+                                            alt={`Active Panel ${activePanel.panelIndex + 1}`}
+                                            className="absolute inset-0 w-full h-full object-cover"
+                                            style={{
+                                                animation: isThinking
+                                                    ? 'kenBurnsZoom 12s ease-in-out infinite alternate'
+                                                    : 'none',
+                                                transform: isThinking ? undefined : 'scale(1.05)',
+                                                transition: 'transform 2s ease',
+                                            }}
+                                        />
+                                    ) : (
+                                        <div className="absolute inset-0 bg-gradient-to-br from-slate-200 via-slate-300 to-slate-200 animate-pulse flex items-center justify-center">
+                                            <div className="text-center">
+                                                <Loader2 className="w-10 h-10 mx-auto mb-2 text-slate-400 animate-spin" />
+                                                <div className="font-comic text-xl text-slate-400 tracking-wider">PAINTING THE SCENE...</div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Cinematic gradient overlay for readability */}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent pointer-events-none" />
+
+                                    {/* Panel number badge */}
+                                    <div className="absolute top-4 left-4 z-20 bg-black/80 text-white font-bold text-sm w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm border border-white/20">
+                                        {activePanel.panelIndex + 1}
+                                    </div>
+
+                                    {/* "LIVE" badge while narrating */}
+                                    {isThinking && (
+                                        <div className="absolute top-4 right-4 z-20 flex items-center gap-1.5 bg-red-600 border-2 border-white/30 text-white font-comic text-xs px-3 py-1 rounded-full animate-pulse shadow-lg">
+                                            <div className="w-2 h-2 bg-white rounded-full animate-ping" />
+                                            LIVE
+                                        </div>
+                                    )}
+
+                                    {/* Speech bubble */}
+                                    {activePanel.speechBubble && isImageReady && (
+                                        <div className="absolute top-16 right-6 max-w-[50%] z-20">
+                                            <div className="relative bg-white border-2 border-black rounded-2xl px-4 py-2 text-black font-bold text-sm leading-tight shadow-xl">
+                                                {activePanel.speechBubble}
+                                                <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[10px] border-t-black" />
+                                                <div className="absolute -bottom-1.5 left-4 w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[10px] border-t-white" />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Bottom caption bar */}
+                                    <div className="absolute bottom-0 left-0 right-0 z-20 px-6 py-4">
+                                        {activePanel.learningObjective && (
+                                            <div className="mb-2">
+                                                <span className="text-xs bg-indigo-500/80 backdrop-blur-sm border border-indigo-300/50 text-white font-bold rounded-full px-3 py-1 leading-tight">
+                                                    📚 {activePanel.learningObjective}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <p className="font-comic text-white text-base md:text-lg leading-relaxed drop-shadow-lg max-w-3xl">
+                                            {activePanel.narration}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* ── PAST PANELS TIMELINE (smaller grid of older panels) ── */}
+                    {panels.length > 1 && (
+                        <div className="px-2 pt-2 pb-1">
+                            <div className="font-comic text-xs text-slate-400 uppercase tracking-widest mb-1.5 px-1">Story So Far</div>
+                            <div className="flex gap-[3px] overflow-x-auto pb-2 snap-x">
+                                {panels.slice(0, -1).map((panel) => (
+                                    <div
+                                        key={panel.id}
+                                        className="flex-shrink-0 w-40 md:w-52 snap-start"
+                                    >
+                                        <ComicPanel
+                                            panel={panel}
+                                            isLatest={false}
+                                            isSplash={false}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Complete state — show all panels in full grid */}
+                    {builderPhase === 'complete' && panels.length > 0 && (
                         <div className="p-2">
                             <div className="bg-black border-4 border-black grid grid-cols-2 lg:grid-cols-3 gap-[3px] p-[3px]">
                                 {panels.map((panel, idx) => (
                                     <ComicPanel
                                         key={panel.id}
                                         panel={panel}
-                                        isLatest={idx === panels.length - 1 && builderPhase !== 'complete'}
+                                        isLatest={false}
                                         isSplash={idx === 0}
                                     />
                                 ))}
+                            </div>
+                        </div>
+                    )}
 
-                                {/* Next panel loading placeholder */}
-                                {isThinking && builderPhase === 'building' && (
-                                    <div className="aspect-square bg-slate-200 border-4 border-black rounded-sm animate-pulse flex items-center justify-center">
-                                        <span className="font-comic text-3xl text-slate-300">...</span>
-                                    </div>
-                                )}
+                    {/* Next panel loading placeholder */}
+                    {isThinking && builderPhase === 'building' && panels.length > 0 && (
+                        <div className="px-3 pt-1">
+                            <div className="h-1.5 w-32 bg-indigo-200 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 rounded-full animate-pulse" style={{ width: '60%' }} />
                             </div>
                         </div>
                     )}

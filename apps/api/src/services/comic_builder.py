@@ -81,6 +81,7 @@ Total panels: 9-12. Structure per arc:
 TOOL CALLING RULES
 ═══════════════════════════════════════
 - Call `add_comic_panel` after EVERY narration beat (story AND teaching panels).
+- IMPORTANT: After calling `add_comic_panel`, WAIT silently for the tool confirmation before doing anything else. The image is being rendered — do not narrate or call another tool until you receive the response.
 - For teaching panels: set `learning_objective` to a short phrase like "How tectonic plates create volcanoes".
 - For story/action panels: omit `learning_objective` or leave it empty.
 - Call `ask_quiz` only after teaching panels — never cold.
@@ -195,6 +196,7 @@ async def proxy_comic_builder_session(client_ws: WebSocket, session_id: str):
 
     client_disconnected = asyncio.Event()
     pending_tasks: set[asyncio.Task] = set()
+    last_panel_image_b64: str | None = None  # Track last image for continuity
 
     async def safe_send(payload: dict):
         """Send JSON to the client WebSocket, but only if still connected."""
@@ -338,7 +340,7 @@ async def proxy_comic_builder_session(client_ws: WebSocket, session_id: str):
                                         visual_description = args.get("visual_description", "")
                                         learning_objective = args.get("learning_objective") or None
 
-                                        # 1. Immediately send panel structure (loading state)
+                                        # 1. Immediately notify the UI (panel is loading)
                                         await safe_send({
                                             "backendEvent": {
                                                 "type": "panel_added",
@@ -350,45 +352,62 @@ async def proxy_comic_builder_session(client_ws: WebSocket, session_id: str):
                                             }
                                         })
 
-                                        # 2. Fire image generation asynchronously
-                                        async def generate_panel_image(pid=panel_id, vdesc=visual_description):
+                                        # 2. Background task: generate image → send image to UI → THEN send tool
+                                        #    response to Gemini. This keeps receive_from_gemini() unblocked so
+                                        #    Gemini's audio chunks continue flowing. Gemini only gets the "continue"
+                                        #    signal after the scene image is ready — achieving sync without blocking.
+                                        ref_image = last_panel_image_b64
+                                        fc_name = name
+                                        fc_id = function_call.id
+
+                                        async def build_panel_then_respond(
+                                            pid=panel_id,
+                                            vdesc=visual_description,
+                                            ref=ref_image,
+                                            _fc_name=fc_name,
+                                            _fc_id=fc_id,
+                                        ):
+                                            nonlocal last_panel_image_b64
                                             try:
-                                                print(f"[{session_id}] [Builder] Generating image for {pid}")
-                                                url = await generate_image(vdesc)
-                                                status = "ready" if url else "error"
+                                                print(f"[{session_id}] [Builder] Generating image for {pid} (ref={'yes' if ref else 'no'})")
+                                                url = await generate_image(vdesc, reference_image_b64=ref)
+                                                img_status = "ready" if url else "error"
                                                 await safe_send({
                                                     "backendEvent": {
                                                         "type": "panel_image_ready",
                                                         "panelId": pid,
                                                         "imageUrl": url,
-                                                        "imageStatus": status
+                                                        "imageStatus": img_status,
                                                     }
                                                 })
-                                            except Exception as e:
-                                                print(f"[{session_id}] [Builder] Image gen error for {pid}: {e}")
+                                                if url:
+                                                    last_panel_image_b64 = url
+                                            except Exception as img_err:
+                                                print(f"[{session_id}] [Builder] Image gen error for {pid}: {img_err}")
                                                 await safe_send({
                                                     "backendEvent": {
                                                         "type": "panel_image_ready",
                                                         "panelId": pid,
                                                         "imageUrl": None,
-                                                        "imageStatus": "error"
+                                                        "imageStatus": "error",
                                                     }
                                                 })
+                                            finally:
+                                                # Always unblock Gemini after image attempt (success or error)
+                                                if not client_disconnected.is_set():
+                                                    await gemini_session.send_tool_response(
+                                                        function_responses=[
+                                                            types.FunctionResponse(
+                                                                name=_fc_name,
+                                                                id=_fc_id,
+                                                                response={"result": f"Panel {pid} is visible. Continue narrating."}
+                                                            )
+                                                        ]
+                                                    )
 
-                                        task = asyncio.create_task(generate_panel_image())
+                                        task = asyncio.create_task(build_panel_then_respond())
                                         pending_tasks.add(task)
                                         task.add_done_callback(pending_tasks.discard)
-
-                                        # 3. Immediately confirm to Gemini so it continues
-                                        await gemini_session.send_tool_response(
-                                            function_responses=[
-                                                types.FunctionResponse(
-                                                    name=name,
-                                                    id=function_call.id,
-                                                    response={"result": f"Panel {panel_id} added. Image is generating."}
-                                                )
-                                            ]
-                                        )
 
                                     elif name == "ask_quiz":
                                         question = args.get("question", "")
